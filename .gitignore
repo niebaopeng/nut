@@ -1,0 +1,3 @@
+*.pyc
+pyvenv
+*.egg-info
