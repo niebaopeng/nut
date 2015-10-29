@@ -332,7 +332,8 @@ def main():
                     'another. This means any message received on this machine '
                     'on one of the ports specified from one of the hosts is '
                     'relayed to the other host across the same protocol and '
-                    'same port.')
+                    'same port. Handy for, say, tunneling some networking out '
+                    'of a VM to an external network.')
     parser.add_argument(
         'host_a',
         help='Host name or IP address for interface A.')
@@ -344,12 +345,14 @@ def main():
         dest='udp_port',
         type=int,
         nargs='+',
+        default=[],
         help='UDP port numbers to relay.')
     parser.add_argument(
         '--tcp', '-t',
         dest='tcp_port',
         type=int,
         nargs='+',
+        default=[],
         help='TCP port numbers to relay.')
     parser.add_argument(
         '--max-message-size',
