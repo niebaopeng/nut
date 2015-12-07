@@ -1,3 +1,3 @@
-from . import relay
+from . import relay  # NOQA
 
-__version__ = '0.1.1'
+__version__ = '0.1.2'

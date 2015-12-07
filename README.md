@@ -32,15 +32,17 @@ Use [`nut/relay.py`](./nut/relay.py) directly or install it and use the
 `nutrelay` entry point script.
 
 ```
-usage: relay.py [-h] [--udp UDP_PORT [UDP_PORT ...]]
-                [--tcp TCP_PORT [TCP_PORT ...]]
+usage: relay.py [-h] [--udp [udp_port_spec [udp_port_spec ...]]]
+                [--tcp [tcp_port_spec [tcp_port_spec ...]]]
                 [--max-message-size MAX_MESSAGE_SIZE]
                 [--tcp-connection-backlog BACKLOG]
                 host_a host_b
 
 Acts as a TCP and UDP relay from one interface to another. This means any
 message received on this machine on one of the ports specified from one of the
-hosts is relayed to the other host across the same protocol and same port.
+hosts is relayed to the other host across the same protocol and same port (or
+other port if specified). Handy for, say, tunneling some networking out of a
+VM to an external network.
 
 positional arguments:
   host_a                Host name or IP address for interface A.
@@ -48,10 +50,22 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-  --udp UDP_PORT [UDP_PORT ...], -u UDP_PORT [UDP_PORT ...]
-                        UDP port numbers to relay.
-  --tcp TCP_PORT [TCP_PORT ...], -t TCP_PORT [TCP_PORT ...]
-                        TCP port numbers to relay.
+  --udp [udp_port_spec [udp_port_spec ...]], -u [udp_port_spec [udp_port_spec ...]]
+                        UDP port numbers to relay. If just an integer then the
+                        same port is used on each interface. If in the format
+                        "####-####" (or a regex of "[0-9]+-[0-9]+") then it is
+                        interpreted as a port remapping where the first
+                        integer (before the dash) is the port to listen and
+                        send to for host A and the second integer (after the
+                        dash) is the port to listen and send to for host B.
+  --tcp [tcp_port_spec [tcp_port_spec ...]], -t [tcp_port_spec [tcp_port_spec ...]]
+                        TCP port numbers to relay. If just an integer then the
+                        same port is used on each interface. If in the format
+                        "####-####" (or a regex of "[0-9]+-[0-9]+") then it is
+                        interpreted as a port remapping where the first
+                        integer (before the dash) is the port to listen and
+                        send to for host A and the second integer (after the
+                        dash) is the port to listen and send to for host B.
   --max-message-size MAX_MESSAGE_SIZE, -m MAX_MESSAGE_SIZE
                         Sets the max message size in bytes (default=16384)
   --tcp-connection-backlog BACKLOG, -b BACKLOG
