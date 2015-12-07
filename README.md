@@ -36,6 +36,7 @@ usage: relay.py [-h] [--udp [udp_port_spec [udp_port_spec ...]]]
                 [--tcp [tcp_port_spec [tcp_port_spec ...]]]
                 [--max-message-size MAX_MESSAGE_SIZE]
                 [--tcp-connection-backlog BACKLOG]
+                [--substitute [substitution [substitution ...]]]
                 host_a host_b
 
 Acts as a TCP and UDP relay from one interface to another. This means any
@@ -70,4 +71,8 @@ optional arguments:
                         Sets the max message size in bytes (default=16384)
   --tcp-connection-backlog BACKLOG, -b BACKLOG
                         Sets the backlog size for TCP connections (default=5)
+  --substitute [substitution [substitution ...]], -s [substitution [substitution ...]]
+                        Specify regular expression substitutions in the form
+                        -s/pattern/replace/ where / can be replaced with
+                        another delimiter.
 ```
