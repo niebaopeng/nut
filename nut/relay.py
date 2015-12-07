@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 import argparse
+import itertools
 import logging
+import re
 import select
 import socket
+import sys
 from threading import Event, Thread
 
 
@@ -806,6 +809,32 @@ def parsePortSpec(spec, separator='-'):
     return tuple(map(int, x * (3 - len(x))))
 
 
+class Substitution():
+
+    def __init__(self, spec):
+        self.spec = spec
+        self.delim = self.spec[0]
+        components = re.split(r'(?<!\\)' + self.delim, self.spec)
+        if len(components) < 4:
+            raise ValueError('Substitution not completely defined')
+        if len(components) > 4:
+            raise ValueError('Substitution overly defined')
+        self.pattern, self.substitution = components[1:3]
+        if sys.version_info >= (3,):
+            self.pattern = self.pattern.encode('utf-8')
+            self.substitution = self.substitution.encode('utf-8')
+
+    def apply(self, string):
+        return re.sub(self.pattern, self.substitution, string)
+
+    def __repr__(self):
+        return '{:}({:})'.format(self.__class__.__name__, self.spec)
+
+    def __str__(self):
+        return '{delim}{pattern}{delim}{substitution}{delim}'.format(
+            **self.__dict__)
+
+
 def main():
     logger = logging.getLogger('relay')
     logger.setLevel(logging.DEBUG)
@@ -833,6 +862,7 @@ def main():
         '--udp', '-u',
         dest='udp_port_specs',
         metavar='udp_port_spec',
+        action='append',
         type=str,
         nargs='*',
         default=[],
@@ -846,6 +876,7 @@ def main():
         '--tcp', '-t',
         dest='tcp_port_specs',
         metavar='tcp_port_spec',
+        action='append',
         type=str,
         nargs='*',
         default=[],
@@ -856,19 +887,28 @@ def main():
              'port to listen and send to for host A and the second integer '
              '(after the dash) is the port to listen and send to for host B.')
     parser.add_argument(
-        '--max-message-size',
-        '-m',
+        '--max-message-size', '-m',
         dest='max_message_size',
         type=int,
         default=16384,
         help='Sets the max message size in bytes (default=16384)')
     parser.add_argument(
-        '--tcp-connection-backlog',
-        '-b',
+        '--tcp-connection-backlog', '-b',
         dest='backlog',
         type=int,
         default=5,
         help='Sets the backlog size for TCP connections (default=5)')
+    parser.add_argument(
+        '--substitute', '-s',
+        dest='substitutions',
+        metavar='substitution',
+        action='append',
+        type=Substitution,
+        nargs='*',
+        default=[],
+        help='Specify regular expression substitutions in the form '
+             '-s/pattern/replace/ where / can be replaced with another '
+             'delimiter.')
 
     args = parser.parse_args()
 
@@ -879,17 +919,42 @@ def main():
     logger.info(
         'Host name B "{:}" interpreted as IP "{:}"'.format(args.host_b, ip_b))
 
+    args.substitutions = \
+        list(itertools.chain.from_iterable(args.substitutions))
+    args.udp_port_specs = \
+        list(itertools.chain.from_iterable(args.udp_port_specs))
+    args.tcp_port_specs = \
+        list(itertools.chain.from_iterable(args.tcp_port_specs))
+
+    logger.info('Substitutions: {:}'.format(args.substitutions))
+
+    middleman = None
+    if len(args.substitutions) > 0:
+        def middleman(
+                msg,
+                src_name, src_host, src_port,
+                dst_name, dst_host, dst_port):
+            for substitution in args.substitutions:
+                msg = substitution.apply(msg)
+            return msg
+
     relays = []
 
     for udp_port_spec in args.udp_port_specs:
         port_a, port_b = parsePortSpec(udp_port_spec)
-        relay = UdpRelay(ip_a, port_a, ip_b, port_b, args.max_message_size)
+        relay = UdpRelay(
+            ip_a, port_a, ip_b, port_b,
+            max_message_size=args.max_message_size,
+            message_middleware=middleman)
         relays.append(relay)
 
     for tcp_port_spec in args.tcp_port_specs:
         port_a, port_b = parsePortSpec(tcp_port_spec)
         relay = TcpRelayServer(
-            ip_a, port_a, ip_b, port_b, args.max_message_size, args.backlog)
+            ip_a, port_a, ip_b, port_b,
+            max_message_size=args.max_message_size,
+            backlog=args.backlog,
+            message_middleware=middleman)
         relays.append(relay)
 
     for relay in relays:
