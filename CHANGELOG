@@ -1,0 +1,18 @@
+v0.1.2
+------
+
+- Added port remapping support
+- Changed public attributes to properties
+- Added preliminary message_middleware support to UdpRelay, TcpRelay, and
+  TcpRelayServer
+
+v0.1.1
+------
+
+- Fixed empty TCP and UDP ports bug
+
+v0.1.0
+------
+
+- Initial commit
+- Added nutrelay
