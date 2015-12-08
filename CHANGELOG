@@ -5,6 +5,7 @@ v0.1.4
   --dump-path or -d option
   - Added new Dump class which encapsulates the dump information for a
     particular end point
+- Added dump replay capability with replay.py script and nutreplay entry point
 - Added --logging-level option to relay
 - Added publicly exposed globalKill() method to relay module so that the kill
   signal can be set externally
@@ -13,6 +14,8 @@ v0.1.4
   elsewhere
 - Added docstring to Substitution class
 - Sprinkled some comments, mostly for visual distinction of logical sections
+- Reformatted argparse setup
+- Changed relay's logging namespace to nut.relay
 
 v0.1.3
 ------

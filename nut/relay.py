@@ -981,99 +981,111 @@ class Dump():
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Acts as a TCP and UDP relay from one interface to '
-                    'another. This means any message received on this machine '
-                    'on one of the ports specified from one of the hosts is '
-                    'relayed to the other host across the same protocol and '
-                    'same port (or other port if specified). Handy for, say, '
-                    'tunneling some networking out of a VM to an external '
-                    'network.')
-    parser.add_argument(
-        'host_a',
-        help='Host name or IP address for interface A.')
-    parser.add_argument(
-        'host_b',
-        help='Host name or IP address for interface B.')
-    parser.add_argument(
-        '--udp', '-u',
-        dest='udp_port_specs',
-        metavar='udp_port_spec',
-        action='append',
-        type=str,
-        nargs='*',
-        default=[],
-        help='UDP port numbers to relay. If just an integer then the same '
-             'port is used on each interface. If in the format "####-####" '
-             '(or a regex of "[0-9]+-[0-9]+") then it is interpreted as a '
-             'port remapping where the first integer (before the dash) is the '
-             'port to listen and send to for host A and the second integer '
-             '(after the dash) is the port to listen and send to for host B.')
-    parser.add_argument(
-        '--tcp', '-t',
-        dest='tcp_port_specs',
-        metavar='tcp_port_spec',
-        action='append',
-        type=str,
-        nargs='*',
-        default=[],
-        help='TCP port numbers to relay. If just an integer then the same '
-             'port is used on each interface. If in the format "####-####" '
-             '(or a regex of "[0-9]+-[0-9]+") then it is interpreted as a '
-             'port remapping where the first integer (before the dash) is the '
-             'port to listen and send to for host A and the second integer '
-             '(after the dash) is the port to listen and send to for host B.')
-    parser.add_argument(
-        '--max-message-size', '-m',
-        dest='max_message_size',
-        type=int,
-        default=16384,
-        help='Sets the max message size in bytes (default=16384)')
-    parser.add_argument(
-        '--tcp-connection-backlog', '-b',
-        dest='backlog',
-        type=int,
-        default=5,
-        help='Sets the backlog size for TCP connections (default=5)')
-    parser.add_argument(
-        '--substitute', '-s',
-        dest='substitutions',
-        metavar='substitution',
-        action='append',
-        type=Substitution,
-        nargs='*',
-        default=[],
-        help='Specify regular expression substitutions in the form '
-             '-s/pattern/replace/ where / can be replaced with another '
-             'delimiter.')
-    parser.add_argument(
-        '--dump-path', '-d',
-        dest='dump_path',
-        type=str,
-        default=None,
-        help='Specify a path to dump all messages to. Messages are dumped '
-             'into individual files and organized by destination into paths '
-             'formatted by the destination information as '
-             '"{dump_path}/{a|b}/{udp|tcp}{port}". Message timestamps are '
-             'written to a file named "timestamps.txt" stored in the '
-             'aforementioned path. The timestamps are in seconds relative to '
-             'the first message received amongst *all* relays. This dump can '
-             'be replayed to reconfigurable destinations using the replay.py '
-             'script. Note that the message dumped is after all '
-             'substitutions.')
-    parser.add_argument(
-        '--logging-level',
-        dest='logging_level',
-        type=str,
-        default='DEBUG',
-        choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
-        help='Sets the logging level. Must be CRITICAL, ERROR, WARNING, INFO, '
-             'DEBUG, or NOTSET. Default is DEBUG.')
+    parser = argparse.ArgumentParser(**{
+        'description':
+            'Acts as a TCP and UDP relay from one interface to another. This '
+            'means any message received on this machine on one of the ports '
+            'specified from one of the hosts is relayed to the other host '
+            'across the same protocol and same port (or other port if '
+            'specified). Handy for, say, tunneling some networking out of a '
+            'VM to an external network.'})
+
+    parser.add_argument('host_a', **{
+        'help':
+            'Host name or IP address for interface A.'})
+
+    parser.add_argument('host_b', **{
+        'help':
+            'Host name or IP address for interface B.'})
+
+    parser.add_argument('--udp', '-u', **{
+        'dest': 'udp_port_specs',
+        'metavar': 'udp_port_spec',
+        'action': 'append',
+        'type': str,
+        'nargs': '*',
+        'default': [],
+        'help':
+            'UDP port numbers to relay. If just an integer then the same port '
+            'is used on each interface. If in the format "####-####" (or a '
+            'regex of "[0-9]+-[0-9]+") then it is interpreted as a port '
+            'remapping where the first integer (before the dash) is the port '
+            'to listen and send to for host A and the second integer (after '
+            'the dash) is the port to listen and send to for host B.'})
+
+    parser.add_argument('--tcp', '-t', **{
+        'dest': 'tcp_port_specs',
+        'metavar': 'tcp_port_spec',
+        'action': 'append',
+        'type': str,
+        'nargs': '*',
+        'default': [],
+        'help':
+            'TCP port numbers to relay. If just an integer then the same port '
+            'is used on each interface. If in the format "####-####" (or a '
+            'regex of "[0-9]+-[0-9]+") then it is interpreted as a port '
+            'remapping where the first integer (before the dash) is the port '
+            'to listen and send to for host A and the second integer (after '
+            'the dash) is the port to listen and send to for host B.'})
+
+    parser.add_argument('--max-message-size', '-m', **{
+        'dest': 'max_message_size',
+        'type': int,
+        'default': 16384,
+        'help':
+            'Sets the max message size in bytes (default=16384)'})
+
+    parser.add_argument('--tcp-connection-backlog', '-b', **{
+        'dest': 'backlog',
+        'type': int,
+        'default': 5,
+        'help':
+            'Sets the backlog size for TCP connections (default=5)'})
+
+    parser.add_argument('--substitute', '-s', **{
+        'dest': 'substitutions',
+        'metavar': 'substitution',
+        'action': 'append',
+        'type': Substitution,
+        'nargs': '*',
+        'default': [],
+        'help':
+            'Specify regular expression substitutions in the form -s/pattern/'
+            'replace/ where / can be replaced with another delimiter. The '
+            'substitution is applied to *every* message. By default no '
+            'substitutions are performed.'})
+
+    parser.add_argument('--dump-path', '-d', **{
+        'dest': 'dump_path',
+        'type': str,
+        'default': None,
+        'help':
+            'Specify a path to dump all messages to. Messages are dumped into '
+            'individual files and organized by destination into paths '
+            'formatted using the destination information as follows: '
+            '"{dump_path}/{a|b}/{udp|tcp}{port}". The messages are stored if '
+            'files named by an increment message count, starting at zero, and '
+            'written in "%%09d" format without extension. Message timestamps '
+            'are written in ASCII format ("%%f") to a file named "timestamps.'
+            'txt" stored in the aforementioned path. The timestamps are in '
+            'seconds relative to the first message received amongst *all* '
+            'relays. This dump can be replayed to reconfigurable destinations '
+            'using the replay.py script. Note that the message dumped is '
+            'after all substitutions.'})
+
+    parser.add_argument('--logging-level', **{
+        'dest': 'logging_level',
+        'type': str,
+        'default': 'DEBUG',
+        'choices': ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
+        'help':
+            'Sets the logging level. Must be CRITICAL, ERROR, WARNING, INFO, '
+            'DEBUG, or NOTSET. Default is DEBUG.'})
 
     args = parser.parse_args()
 
     # Set up logging
-    logger = logging.getLogger('relay')
+    logger = logging.getLogger('nut.relay')
     logging_level = getattr(logging, args.logging_level)
     logger.setLevel(logging_level)
     formatter = logging.Formatter(
