@@ -1,15 +1,34 @@
 #!/usr/bin/env python
 import argparse
+import functools
 import itertools
 import logging
+import os
+import os.path
 import re
 import select
 import socket
 import sys
+import time
+import traceback
 from threading import Event, Thread
 
 
 _global_kill = Event()
+
+
+def globalKill():
+    '''
+    Triggers the global kill signal that all :class:`UdpRelay`,
+    :class:`TcpRelay`, and :class:`TcpRelayServer` listen to to determine if
+    they should kill their running threads.
+    '''
+    global _global_kill
+    _global_kill.set()
+
+
+# TODO (vietjtnguyen): I'd like to break the classes out into separate files
+# but I also like that this script is self contained...
 
 
 class UdpRelay(Thread):
@@ -179,6 +198,7 @@ class UdpRelay(Thread):
                 self._sockets = [self._socket_a, self._socket_b]
         except Exception as e:
             self._logger.error('Error while creating sockets: {:}'.format(e))
+            traceback.print_exc()
             self._logger.warning('Killing program')
             _global_kill.set()
 
@@ -239,6 +259,7 @@ class UdpRelay(Thread):
                 self._logger.error(
                     'Caught exception while waiting for message: {:}'
                     .format(e))
+                traceback.print_exc()
                 break
 
         self._logger.info('Terminating')
@@ -396,14 +417,17 @@ class TcpRelay(Thread):
 
         super(TcpRelay, self).__init__()
 
+        # Remember parameters
         self._socket_a, self._host_a, self._port_a = socket_a, host_a, port_a
         self._socket_b, self._host_b, self._port_b = socket_b, host_b, port_b
         self._max_message_size = max_message_size
         self._timeout = timeout
         self._message_middleware = message_middleware
 
+        # Keep a list of sockets to pass to select
         self._sockets = [self._socket_a, self._socket_b]
 
+        # Create logger
         self._logger = logging.getLogger(
             'relay.TcpRelay({_host_a}:{_port_a} <-> {_host_b}:{_port_b})'
             .format(**self.__dict__))
@@ -439,6 +463,7 @@ class TcpRelay(Thread):
                 self._logger.error(
                     'Caught exception while waiting for "recv": {:}'
                     .format(e))
+                traceback.print_exc()
                 break
 
         self._logger.info('Terminating')
@@ -453,8 +478,14 @@ class TcpRelay(Thread):
         return self._handleMessage(src_socket, msg)
 
     def _handleMessage(self, src_socket, msg):
+        '''
+        :returns: :data:`python:True` if the connect has been disconnected and
+                  :data:`python:False` if the connection is still alive and
+                  everything was processed normally
+        '''
         self._logger.debug('Message received: {!r}'.format(msg))
 
+        # Check where the message came from and determine where it's going
         if src_socket is self._socket_a:
             src_name, src_host, src_port = 'A', self._host_a, self._port_a
             dst_name, dst_host, dst_port = 'B', self._host_b, self._port_b
@@ -476,17 +507,21 @@ class TcpRelay(Thread):
                 src_name, src_host, src_port,
                 dst_name, dst_host, dst_port))
 
+        # If the message is empty or non-existent then the connection has
+        # closed
         if not msg or msg == '':
             self._logger.info(
                 'Connection to host {:} closed'.format(src_name))
             return True
 
+        # Apply middleware to the message if middleware exists
         if self._message_middleware is not None:
             msg = self._message_middleware(
                 msg,
                 src_name, src_host, src_port,
                 dst_name, dst_host, dst_port)
 
+        # Finally send the message
         dst_socket.send(msg)
 
         return False
@@ -606,6 +641,7 @@ class TcpRelayServer(Thread):
 
         super(TcpRelayServer, self).__init__()
 
+        # Store parameters
         self._host_a, self._port_a = host_a, port_a
         self._host_b, self._port_b = host_b, port_b
         self._max_message_size = max_message_size
@@ -613,10 +649,12 @@ class TcpRelayServer(Thread):
         self._backlog = backlog
         self._message_middleware = message_middleware
 
+        # Create logger
         self._logger = logging.getLogger(
             'relay.TcpRelayServer({_host_a}:{_port_a} <-> {_host_b}:{_port_b})'
             .format(**self.__dict__))
 
+        # Create sockets
         self._socket_a, self._socket_b = None, None
         try:
             if self._port_a == self._port_b:
@@ -634,6 +672,7 @@ class TcpRelayServer(Thread):
                 self._sockets = [self._socket_a, self._socket_b]
         except Exception as e:
             self._logger.error('Error while creating sockets: {:}'.format(e))
+            traceback.print_exc()
             self._logger.warning('Killing program')
             _global_kill.set()
 
@@ -704,6 +743,7 @@ class TcpRelayServer(Thread):
                 self._logger.error(
                     'Caught exception while waiting for "accept": {:}'
                     .format(e))
+                traceback.print_exc()
                 break
 
         self._logger.info('Terminating')
@@ -765,6 +805,7 @@ class TcpRelayServer(Thread):
                 'Caught exception while setting up forwarding connection to '
                 '({:}, {:}): {:}'
                 .format(dst_host, dst_port, e))
+            traceback.print_exc()
             self._logger.info(
                 'Closing new connection from ({:}, {:})'
                 .format(src_host, src_port))
@@ -810,6 +851,14 @@ def parsePortSpec(spec, separator='-'):
 
 
 class Substitution():
+    '''
+    Encapsulates a regular expression substitution applied to messages.
+    Substitutions are interpreted by using the first character as the delimiter
+    between the search pattern and the replace pattern. For example, if the
+    substitution specification is ``/foo/bar/`` then each instance of ``foo``
+    is replaced with ``bar``. Note that ``/foo/bar``, ``foo/bar/``, ``foo/bar``
+    are all invalid but ``#foo#bar#`` and ``-foo-bar-`` are valid.
+    '''
 
     def __init__(self, spec):
         self.spec = spec
@@ -835,15 +884,103 @@ class Substitution():
             **self.__dict__)
 
 
-def main():
-    logger = logging.getLogger('relay')
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+# Force compatability with the Python 3 os.makedirs() interface which has the
+# exist_ok keyword argument
+if sys.version_info >= (3,):
+    makedirs = os.makedirs
+else:
+    def makedirs(name, mode=0o777, exist_ok=False):
+        if exist_ok:
+            if not os.path.exists(name):
+                return os.makedirs(name, mode)
+        else:
+            return os.makedirs(name, mode)
 
+
+# Define a Python 2 and Python 3 compatible function for getting time
+_getTime_epoch = None
+if sys.version_info > (3, 3):
+    def getTime():
+        global _getTime_epoch
+        if _getTime_epoch is None:
+            _getTime_epoch = time.monotonic()
+        return time.monotonic() - _getTime_epoch
+else:
+    def getTime():
+        global _getTime_epoch
+        if _getTime_epoch is None:
+            _getTime_epoch = time.time()
+        return time.time() - _getTime_epoch
+
+
+class Dump():
+    '''
+    Encapsulates the information needed to dump messages destined for a
+    particular end point to a particular dump location.
+    '''
+
+    def __init__(self, base_path, host_letter, protocol, port):
+        self.base_path = base_path
+        self.host_letter = host_letter
+        self.protocol = protocol
+        self.port = port
+
+        self.local_path = os.path.join(
+            self.host_letter,
+            '{:}{:}'.format(self.protocol, self.port))
+
+        self.dump_path = os.path.join(self.base_path, self.local_path)
+
+        global makedirs
+        makedirs(self.dump_path, exist_ok=True)
+
+        self.message_count = 0
+
+        self.timestamps_filename = \
+            os.path.join(self.dump_path, 'timestamps.txt')
+        self.timestamps_file = open(self.timestamps_filename, 'wb')
+
+    def __del__(self):
+        self.timestamps_file.close()
+
+    def __str__(self):
+        return '{:}({:})'.format(self.__class__.__name__, self.dump_path)
+
+    def __repr__(self):
+        return '{:}({:}, {:}, {:}, {:})'.format(
+            self.__class__.__name__,
+            self.base_path,
+            self.host_letter,
+            self.protocol,
+            self.port)
+
+    def dump(self, msg):
+        '''
+        Dumps the provided message to this dump.
+        '''
+        # Name the dump file by message count, starting at zero
+        local_dump_filename = '{:09d}'.format(self.message_count)
+
+        # Write just the time stamp and implicitly align the timestamp to the
+        # message filename by line number
+        global getTime
+        if sys.version_info >= (3,):
+            self.timestamps_file.write(
+                '{:}\n'.format(getTime()).encode('utf-8'))
+        else:
+            self.timestamps_file.write(
+                '{:}\n'.format(getTime()))
+
+        # Dump the message itself to file
+        dump_filename = os.path.join(self.dump_path, local_dump_filename)
+        with open(dump_filename, 'wb') as f:
+            f.write(msg)
+
+        # Increment message count
+        self.message_count += 1
+
+
+def main():
     parser = argparse.ArgumentParser(
         description='Acts as a TCP and UDP relay from one interface to '
                     'another. This means any message received on this machine '
@@ -909,9 +1046,43 @@ def main():
         help='Specify regular expression substitutions in the form '
              '-s/pattern/replace/ where / can be replaced with another '
              'delimiter.')
+    parser.add_argument(
+        '--dump-path', '-d',
+        dest='dump_path',
+        type=str,
+        default=None,
+        help='Specify a path to dump all messages to. Messages are dumped '
+             'into individual files and organized by destination into paths '
+             'formatted by the destination information as '
+             '"{dump_path}/{a|b}/{udp|tcp}{port}". Message timestamps are '
+             'written to a file named "timestamps.txt" stored in the '
+             'aforementioned path. The timestamps are in seconds relative to '
+             'the first message received amongst *all* relays. This dump can '
+             'be replayed to reconfigurable destinations using the replay.py '
+             'script. Note that the message dumped is after all '
+             'substitutions.')
+    parser.add_argument(
+        '--logging-level',
+        dest='logging_level',
+        type=str,
+        default='DEBUG',
+        choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
+        help='Sets the logging level. Must be CRITICAL, ERROR, WARNING, INFO, '
+             'DEBUG, or NOTSET. Default is DEBUG.')
 
     args = parser.parse_args()
 
+    # Set up logging
+    logger = logging.getLogger('relay')
+    logging_level = getattr(logging, args.logging_level)
+    logger.setLevel(logging_level)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    # Resolve hostnames if necessary
     ip_a = socket.gethostbyname(args.host_a)
     logger.info(
         'Host name A "{:}" interpreted as IP "{:}"'.format(args.host_a, ip_a))
@@ -919,54 +1090,91 @@ def main():
     logger.info(
         'Host name B "{:}" interpreted as IP "{:}"'.format(args.host_b, ip_b))
 
+    # Parse all port specifications
+    args.udp_port_specs = [
+        parsePortSpec(x)
+        for x
+        in itertools.chain.from_iterable(args.udp_port_specs)]
+    args.tcp_port_specs = [
+        parsePortSpec(x)
+        for x
+        in itertools.chain.from_iterable(args.tcp_port_specs)]
+
     args.substitutions = \
         list(itertools.chain.from_iterable(args.substitutions))
-    args.udp_port_specs = \
-        list(itertools.chain.from_iterable(args.udp_port_specs))
-    args.tcp_port_specs = \
-        list(itertools.chain.from_iterable(args.tcp_port_specs))
-
     logger.info('Substitutions: {:}'.format(args.substitutions))
 
-    middleman = None
-    if len(args.substitutions) > 0:
+    # Set up dumps based on dump path if it is specified
+    logger.info('Dump path: {:}'.format(args.dump_path))
+    if args.dump_path is not None:
+
+        udp_dump_mapping = {}
+        for port_a, port_b in args.udp_port_specs:
+            udp_dump_mapping[(ip_a, port_a)] = Dump(
+                args.dump_path, 'a', 'udp', port_a)
+            udp_dump_mapping[(ip_b, port_b)] = Dump(
+                args.dump_path, 'b', 'udp', port_b)
+
+        tcp_dump_mapping = {}
+        for port_a, port_b in args.tcp_port_specs:
+            tcp_dump_mapping[(ip_a, port_a)] = Dump(
+                args.dump_path, 'a', 'tcp', port_a)
+            tcp_dump_mapping[(ip_b, port_b)] = Dump(
+                args.dump_path, 'b', 'tcp', port_b)
+
+    # Define middleman functions for UDP and TCP relays if either substitution
+    # or dump path has been defined
+    udp_middleman, tcp_middleman = None, None
+    if len(args.substitutions) > 0 or args.dump_path is not None:
         def middleman(
+                dump_mapping,
                 msg,
                 src_name, src_host, src_port,
                 dst_name, dst_host, dst_port):
             for substitution in args.substitutions:
                 msg = substitution.apply(msg)
+            if args.dump_path is not None:
+                dst_invariant = (dst_host, dst_port)
+                dump_info = dump_mapping[dst_invariant]
+                dump_info.dump(msg)
             return msg
+        udp_middleman = functools.partial(middleman, udp_dump_mapping)
+        tcp_middleman = functools.partial(middleman, tcp_dump_mapping)
 
+    # Keep all relays in a list
     relays = []
 
+    # Create UDP relays
     for udp_port_spec in args.udp_port_specs:
-        port_a, port_b = parsePortSpec(udp_port_spec)
+        port_a, port_b = udp_port_spec
         relay = UdpRelay(
             ip_a, port_a, ip_b, port_b,
             max_message_size=args.max_message_size,
-            message_middleware=middleman)
+            message_middleware=udp_middleman)
         relays.append(relay)
 
+    # Create TCP relay servers
     for tcp_port_spec in args.tcp_port_specs:
-        port_a, port_b = parsePortSpec(tcp_port_spec)
+        port_a, port_b = tcp_port_spec
         relay = TcpRelayServer(
             ip_a, port_a, ip_b, port_b,
             max_message_size=args.max_message_size,
             backlog=args.backlog,
-            message_middleware=middleman)
+            message_middleware=tcp_middleman)
         relays.append(relay)
 
+    # Start all relays
     for relay in relays:
         relay.start()
 
+    # Try to exit cleanly when an interrupt occurs
     try:
         for relay in relays:
             while relay.is_alive():
                 relay.join(timeout=10.0)
     except (KeyboardInterrupt, SystemExit):
         logger.info('Killing threads')
-        _global_kill.set()
+        globalKill()
 
 
 if __name__ == '__main__':

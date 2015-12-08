@@ -1,3 +1,19 @@
+v0.1.4
+------
+
+- Added dumping capability to relay by specifying a dump path using the
+  --dump-path or -d option
+  - Added new Dump class which encapsulates the dump information for a
+    particular end point
+- Added --logging-level option to relay
+- Added publicly exposed globalKill() method to relay module so that the kill
+  signal can be set externally
+  - TODO: Maybe make the kill signal overridable on construction
+- Added exception traceback printing to exceptions caught in work loops and
+  elsewhere
+- Added docstring to Substitution class
+- Sprinkled some comments, mostly for visual distinction of logical sections
+
 v0.1.3
 ------
 
