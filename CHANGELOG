@@ -1,3 +1,11 @@
+v0.1.3
+------
+
+- Added support for regular expression substitution of forwarded messages using
+  --substitute or -s option
+- Fixed bug when specifying multiple UDP or TCP port specifications, lack of
+  append action in argparse meant new options overrode old ones
+
 v0.1.2
 ------
 
