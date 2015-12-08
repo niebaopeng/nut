@@ -20,6 +20,7 @@ if __name__ == '__main__':
         entry_points={
             'console_scripts': [
                 'nutrelay = nut.relay:main',
+                'nutreplay = nut.replay:main',
             ],
         },
         classifiers=[
