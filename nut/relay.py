@@ -164,7 +164,7 @@ class UdpRelay(Thread):
         self._host_b, self._port_b = host_b, port_b
 
         self._logger = logging.getLogger(
-            'relay.UdpRelay({_host_a}:{_port_a} <-> {_host_b}:{_port_b})'
+            'nut.relay.UdpRelay({_host_a}:{_port_a} <-> {_host_b}:{_port_b})'
             .format(**self.__dict__))
 
         self._max_message_size = max_message_size
@@ -429,7 +429,7 @@ class TcpRelay(Thread):
 
         # Create logger
         self._logger = logging.getLogger(
-            'relay.TcpRelay({_host_a}:{_port_a} <-> {_host_b}:{_port_b})'
+            'nut.relay.TcpRelay({_host_a}:{_port_a} <-> {_host_b}:{_port_b})'
             .format(**self.__dict__))
 
     def __del__(self):
@@ -651,7 +651,8 @@ class TcpRelayServer(Thread):
 
         # Create logger
         self._logger = logging.getLogger(
-            'relay.TcpRelayServer({_host_a}:{_port_a} <-> {_host_b}:{_port_b})'
+            'nut.relay.TcpRelayServer({_host_a}:{_port_a} <-> {_host_b}:{'
+            '_port_b})'
             .format(**self.__dict__))
 
         # Create sockets

@@ -353,7 +353,7 @@ def main():
         except:
             logger.error(
                 'Caught exception while creating SocketWrapper, skipping')
-            traceback.prin_exc()
+            traceback.print_exc()
             continue
         else:
             logger.info('Successfully created {:}'.format(sock))
