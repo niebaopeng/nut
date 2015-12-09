@@ -1,3 +1,10 @@
+v0.1.5
+------
+
+- Fixed relay.py logger namespaces (forgot to change class loggers from "relay"
+  namespace to "nut.relay")
+- Fixed typo in replay.py, prin_exc() -> print_exc()
+
 v0.1.4
 ------
 
