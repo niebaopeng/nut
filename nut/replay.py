@@ -28,19 +28,67 @@ def globalKill():
     _global_kill.set()
 
 
+Message = collections.namedtuple(
+    'Message',
+    ['time', 'filename', 'offset', 'size', 'socket'])
+
+
+class BatchFile():
+    '''
+    Represents an open batch file. Automatically closes file on deletion.
+    '''
+
+    @property
+    def filename(self):
+        return self._filename
+
+    @property
+    def file(self):
+        return self._file
+
+    def __init__(self, filename):
+        self._logger = logging.getLogger(
+            'nut.replay.BatchFile({:})'.format(filename))
+        self._filename = filename
+        self._file = open(self._filename, 'rb')
+        self._logger.info('File opened')
+
+    def __del__(self):
+        self._logger.info('File closed')
+        self._file.close()
+
+    def getMessage(self, message):
+        '''
+        Conveniently retrieves message contents from a batch file. Can throw a
+        :class:`python:RuntimeError` if the message batch filename doesn't
+        match this batch filename.
+        '''
+        if message.filename != self._filename:
+            raise RuntimeError(
+                'Message filename ({:}) does not match batch filename ({:}).'
+                .format(message.filename, self._filename))
+        self._file.seek(message.offset)
+        self._logger.debug(
+            'Retrieved message offset={:}, size={:}'
+            .format(message.offset, message.size))
+        return self._file.read(message.size)
+
+
 class MessageLoader(Thread):
+    '''
+    This runs in a separate thread, reading messages from batch files and
+    pushing them into a message queue that the main thread consumes. The point
+    of having a threaded message loader is so that the main thread doesn't
+    waste time loading messages when it's time to actually send it. A larger
+    queue size means a larger buffer which should mean lower send latency.
+
+    All in all it's a bit overkill for small messages but can be important for
+    larger messages where loading them has a non negligible time cost.
+    '''
 
     @property
     def messages(self):
         return self._messages
-
-    @property
-    def message_count(self):
-        return self._message_count
-
-    @property
-    def index(self):
-        return self._index
 
     @property
     def queue(self):
@@ -54,49 +102,96 @@ class MessageLoader(Thread):
             self,
             messages,
             queue_size):
-        global _global_kill
-
         super(MessageLoader, self).__init__()
 
         self._logger = logging.getLogger('nut.replay.MessageLoader')
 
         self._messages = messages
 
-        self._message_count = len(self._messages)
-        self._index = 0
         self._queue = Queue(maxsize=queue_size)
 
+        # The following dictionaries effectively map socket to open batch file.
+        # This is because each socket represents one endpoint. Since messages
+        # for a given endpoint are sent out in the same order they were dumped
+        # the message is likely to come from the same batch file as the
+        # previous message. For this reason we keep batch files open per socket
+        # until the batch file needed by a message differs from the one already
+        # open. The dictionary keys are instances of SocketWrapper and the
+        # values are instances of BatchFile.
+        self._batch_files = {}
+
+    def __del__(self):
+        self._logger.info('Closing {:} files'.format(len(self._batch_files)))
+
+        # Make sure we delete the batch files so that __del__ is called on the
+        # BatchFile instances which will close the actual file (descriptors)
+        del self._batch_files
+
+    def _getBatchFile(self, message):
+        current = self._batch_files.get(message.socket, None)
+
+        # We need to load a new batch file if one wasn't already loaded or the
+        # one we need to load is different from the current one
+        if current is None or current.filename != message.filename:
+            if current is None:
+                self._logger.debug(
+                    'Batch file not yet opened for socket {:}'
+                    .format(message.socket))
+            else:
+                self._logger.debug(
+                    'Requested batch file ({:}) and current batch file ({:}) '
+                    'differ so closing current batch file and opening a new '
+                    'one.'
+                    .format(message.filename, current.filename))
+
+                # Delete the current one if it exists so that __del__ is called
+                # on the BatchFile instance to close the actual file
+                # (descriptor)
+                del self._batch_files[message.socket]
+
+            # Load the new batch file
+            self._batch_files[message.socket] = BatchFile(message.filename)
+
+        return self._batch_files[message.socket]
+
     def run(self):
+        '''
+        Overrides :meth:`python:threading.Thread.run`.
+        '''
         global _global_kill
 
-        while self._index < self._message_count:
-            message_filename = self._messages[self._index].filename
+        for message in self._messages:
 
-            # Read the message contents into memory
-            with open(message_filename, 'rb') as f:
-                message = f.read()
+            # Get the message contents from the batch file
+            batch_file = self._getBatchFile(message)
+            message_contents = batch_file.getMessage(message)
             self._logger.debug(
                 'Read message {:}, waiting to be put into queue'
-                .format(message_filename))
+                .format(message))
 
             # Then repeatedly try to put the contents into the queue,
             # occasionally timing out so that we might catch the kill signal
             put_succeeded = False
             while not put_succeeded:
+
                 if _global_kill.isSet():
                     return
+
                 try:
-                    self._queue.put(message, block=True, timeout=1.0)
+                    self._queue.put(message_contents, block=True, timeout=1.0)
                 except Full:
                     pass
                 else:
                     put_succeeded = True
                     self._logger.debug('Message put into queue')
 
-            self._index += 1
-
 
 class SocketWrapper():
+    '''
+    A very simplistic socket wrapper that performs some boilerplate
+    initialization and works for both UDP and TCP sockets as determined by the
+    specified protocol. Also automatically closes the socket on deletion.
+    '''
 
     @property
     def protocol(self):
@@ -168,9 +263,6 @@ class SocketWrapper():
 
     def send(self, message):
         self._socket.send(message)
-
-
-Message = collections.namedtuple('Message', ['time', 'filename', 'socket'])
 
 
 def main():
@@ -358,28 +450,26 @@ def main():
         else:
             logger.info('Successfully created {:}'.format(sock))
 
-        # Load the timestamps
-        timestamps_filename = os.path.join(endpoint, 'timestamps.txt')
+        # Load the index
+        index_filename = os.path.join(endpoint, 'index.csv')
         try:
-            with open(timestamps_filename, 'r') as f:
-                timestamps = list(map(float, f.readlines()))
+            with open(index_filename, 'r') as f:
+                messages = [
+                    Message(
+                        float(t),
+                        os.path.join(endpoint, filename),
+                        int(offset),
+                        int(size),
+                        sock)
+                    for t, filename, offset, size
+                    in map(lambda x: x.split(','), f.readlines())]
         except Exception:
             logger.error(
-                'Caught exception while trying to read timestamps file "{:}", '
+                'Caught exception while trying to read index file "{:}", '
                 'skipping.'
-                .format(timestamps_filename))
+                .format(index_filename))
             traceback.print_exc()
             continue
-
-        # Collect messages into tuple that remembers the message time, file,
-        # and outgoing socket
-        messages = [
-            Message(
-                message_time,
-                os.path.join(endpoint, '{:09d}'.format(index)),
-                sock)
-            for index, message_time
-            in enumerate(timestamps)]
 
         # Add the messages to our list of all messages
         all_messages.extend(messages)
