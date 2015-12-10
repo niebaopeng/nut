@@ -38,6 +38,7 @@ usage: relay.py [-h] [--udp [udp_port_spec [udp_port_spec ...]]]
                 [--tcp-connection-backlog BACKLOG]
                 [--substitute [substitution [substitution ...]]]
                 [--dump-path DUMP_PATH]
+                [--max-dump-batch-size MAX_DUMP_BATCH_SIZE]
                 [--logging-level {CRITICAL,ERROR,WARNING,INFO,DEBUG,NOTSET}]
                 host_a host_b
 
@@ -81,20 +82,29 @@ optional arguments:
                         performed.
   --dump-path DUMP_PATH, -d DUMP_PATH
                         Specify a path to dump all messages to. Messages are
-                        dumped into individual files and organized by
+                        dumped into batch files which contain multiple
+                        messages up to a specified max dump batch size. These
+                        files and the corresponding index are organized by
                         destination into paths formatted using the destination
                         information as follows:
-                        "{dump_path}/{a|b}/{udp|tcp}{port}". The messages are
-                        stored if files named by an increment message count,
-                        starting at zero, and written in "%09d" format without
-                        extension. Message timestamps are written in ASCII
-                        format ("%f") to a file named "timestamps.txt" stored
-                        in the aforementioned path. The timestamps are in
-                        seconds relative to the first message received amongst
-                        *all* relays. This dump can be replayed to
-                        reconfigurable destinations using the replay.py
-                        script. Note that the message dumped is after all
-                        substitutions.
+                        "{dump_path}/{a|b}/{udp|tcp}{port}". The batch files
+                        are named by an increment, starting at zero, and
+                        written in "%09d" format without extension. The
+                        message index, saved as "index.csv" in the
+                        aforementioned path, contains the following in comma
+                        separated format: the message timestamp written in
+                        ASCII format ("%f"), the filename of the batch file
+                        the message is in, the byte offset inside the batch
+                        file for the start of the message, and the size of the
+                        message in bytes. The timestamps are in seconds
+                        relative to the first message received amongst *all*
+                        relays. This dump can be replayed to reconfigurable
+                        destinations using the replay.py script. Note that the
+                        message dumped is after all substitutions.
+  --max-dump-batch-size MAX_DUMP_BATCH_SIZE
+                        Sets the max size in bytes for message batch files
+                        that messages are dumped into when dumping is enabled.
+                        Default is 64 MB (64 * 1024 * 1024 bytes)
   --logging-level {CRITICAL,ERROR,WARNING,INFO,DEBUG,NOTSET}
                         Sets the logging level. Must be CRITICAL, ERROR,
                         WARNING, INFO, DEBUG, or NOTSET. Default is DEBUG.
