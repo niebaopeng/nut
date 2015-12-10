@@ -920,65 +920,139 @@ class Dump():
     particular end point to a particular dump location.
     '''
 
-    def __init__(self, base_path, host_letter, protocol, port):
-        self.base_path = base_path
-        self.host_letter = host_letter
-        self.protocol = protocol
-        self.port = port
+    @property
+    def base_path(self):
+        return self._base_path
 
-        self.local_path = os.path.join(
-            self.host_letter,
-            '{:}{:}'.format(self.protocol, self.port))
+    @property
+    def max_batch_file_size(self):
+        return self._max_batch_file_size
 
-        self.dump_path = os.path.join(self.base_path, self.local_path)
+    @property
+    def host_letter(self):
+        return self._host_letter
 
+    @property
+    def protocol(self):
+        return self._protocol
+
+    @property
+    def port(self):
+        return self._port
+
+    @property
+    def local_path(self):
+        return self._local_path
+
+    @property
+    def dump_path(self):
+        return self._dump_path
+
+    @property
+    def batch_filename(self):
+        return self._batch_filename
+
+    @property
+    def batch_index(self):
+        return self._batch_index
+
+    @property
+    def index_filename(self):
+        return self._index_filename
+
+    def __init__(
+            self,
+            base_path,
+            max_batch_file_size,
+            host_letter,
+            protocol,
+            port):
+
+        # Remember parameters
+        self._base_path = base_path
+        self._max_batch_file_size = max_batch_file_size
+        self._host_letter = host_letter
+        self._protocol = protocol
+        self._port = port
+
+        self._local_path = os.path.join(
+            self._host_letter,
+            '{:}{:}'.format(self._protocol, self._port))
+        self._dump_path = os.path.join(self._base_path, self._local_path)
+
+        # Make dump path if necessary
         global makedirs
-        makedirs(self.dump_path, exist_ok=True)
+        makedirs(self._dump_path, exist_ok=True)
 
-        self.message_count = 0
+        self._batch_index = -1
+        self._batch_filename = None
+        self._batch_file = None
+        self._startNewBatch()
 
-        self.timestamps_filename = \
-            os.path.join(self.dump_path, 'timestamps.txt')
-        self.timestamps_file = open(self.timestamps_filename, 'wb')
+        self._index_filename = \
+            os.path.join(self._dump_path, 'index.csv')
+        self._index_file = open(self._index_filename, 'wb')
+
+        self._message_count = 0
 
     def __del__(self):
-        self.timestamps_file.close()
+        if self._batch_file is not None:
+            self._batch_file.close()
+        self._index_file.close()
 
     def __str__(self):
-        return '{:}({:})'.format(self.__class__.__name__, self.dump_path)
+        return '{:}({:})'.format(self.__class__.__name__, self._dump_path)
 
     def __repr__(self):
         return '{:}({:}, {:}, {:}, {:})'.format(
             self.__class__.__name__,
-            self.base_path,
-            self.host_letter,
-            self.protocol,
-            self.port)
+            self._base_path,
+            self._host_letter,
+            self._protocol,
+            self._port)
+
+    def _startNewBatch(self):
+        if self._batch_file is not None:
+            self._batch_file.close()
+        self._batch_index += 1
+        self._batch_size = 0
+        self._batch_filename = os.path.join(
+            self._dump_path, '{:09d}'.format(self._batch_index))
+        self._batch_file = open(self._batch_filename, 'wb')
 
     def dump(self, msg):
         '''
         Dumps the provided message to this dump.
         '''
-        # Name the dump file by message count, starting at zero
-        local_dump_filename = '{:09d}'.format(self.message_count)
+        msg_size = len(msg)
 
-        # Write just the time stamp and implicitly align the timestamp to the
-        # message filename by line number
+        # We start a new batch if the resulting batch file is larger than the
+        # max batch file size. However, if the current batch file size is zero
+        # then that means the message alone is larger than the max batch file
+        # size. In this case instead of splitting up the message across files
+        # which would greatly increase complexity we simply dump that message
+        # into a file of its own even though it will be larger than the max
+        # batch file size.
+        if self._batch_size + msg_size > self._max_batch_file_size \
+                and self._batch_size > 0:
+            self._startNewBatch()
+
+        # Write the time stamp and information on how to retrieve the message
+        # from the batch files (batch filename, byte offset, and byte size)
         global getTime
+        index_file_entry = '{:},{:09d},{:},{:}\n'.format(
+            getTime(), self._batch_index, self._batch_size, msg_size)
         if sys.version_info >= (3,):
-            self.timestamps_file.write(
-                '{:}\n'.format(getTime()).encode('utf-8'))
+            self._index_file.write(index_file_entry.encode('utf-8'))
         else:
-            self.timestamps_file.write(
-                '{:}\n'.format(getTime()))
+            self._index_file.write(index_file_entry)
 
-        # Dump the message itself to file
-        dump_filename = os.path.join(self.dump_path, local_dump_filename)
-        with open(dump_filename, 'wb') as f:
-            f.write(msg)
+        # Dump the message itself to the current batch file
+        self._batch_file.write(msg)
+        self._batch_size += msg_size
 
         # Increment message count
-        self.message_count += 1
+        self._message_count += 1
 
 
 def main():
@@ -1062,17 +1136,30 @@ def main():
         'default': None,
         'help':
             'Specify a path to dump all messages to. Messages are dumped into '
-            'individual files and organized by destination into paths '
-            'formatted using the destination information as follows: '
-            '"{dump_path}/{a|b}/{udp|tcp}{port}". The messages are stored if '
-            'files named by an increment message count, starting at zero, and '
-            'written in "%%09d" format without extension. Message timestamps '
-            'are written in ASCII format ("%%f") to a file named "timestamps.'
-            'txt" stored in the aforementioned path. The timestamps are in '
-            'seconds relative to the first message received amongst *all* '
-            'relays. This dump can be replayed to reconfigurable destinations '
-            'using the replay.py script. Note that the message dumped is '
-            'after all substitutions.'})
+            'batch files which contain multiple messages up to a specified '
+            'max dump batch size. These files and the corresponding index are '
+            'organized by destination into paths formatted using the '
+            'destination information as follows: "{dump_path}/{a|b}/{udp|tcp}{'
+            'port}". The batch files are named by an increment, starting at '
+            'zero, and written in "%%09d" format without extension. The '
+            'message index, saved as "index.csv" in the aforementioned path, '
+            'contains the following in comma separated format: the message '
+            'timestamp written in ASCII format ("%%f"), the filename of the '
+            'batch file the message is in, the byte offset inside the batch '
+            'file for the start of the message, and the size of the message '
+            'in bytes. The timestamps are in seconds relative to the first '
+            'message received amongst *all* relays. This dump can be replayed '
+            'to reconfigurable destinations using the replay.py script. Note '
+            'that the message dumped is after all substitutions.'})
+
+    parser.add_argument('--max-dump-batch-size', **{
+        'dest': 'max_dump_batch_size',
+        'type': int,
+        'default': 64 * 1024 * 1024,
+        'help':
+            'Sets the max size in bytes for message batch files that messages '
+            'are dumped into when dumping is enabled. Default is 64 MB (64 * '
+            '1024 * 1024 bytes)'})
 
     parser.add_argument('--logging-level', **{
         'dest': 'logging_level',
@@ -1124,16 +1211,16 @@ def main():
         udp_dump_mapping = {}
         for port_a, port_b in args.udp_port_specs:
             udp_dump_mapping[(ip_a, port_a)] = Dump(
-                args.dump_path, 'a', 'udp', port_a)
+                args.dump_path, args.max_dump_batch_size, 'a', 'udp', port_a)
             udp_dump_mapping[(ip_b, port_b)] = Dump(
-                args.dump_path, 'b', 'udp', port_b)
+                args.dump_path, args.max_dump_batch_size, 'b', 'udp', port_b)
 
         tcp_dump_mapping = {}
         for port_a, port_b in args.tcp_port_specs:
             tcp_dump_mapping[(ip_a, port_a)] = Dump(
-                args.dump_path, 'a', 'tcp', port_a)
+                args.dump_path, args.max_dump_batch_size, 'a', 'tcp', port_a)
             tcp_dump_mapping[(ip_b, port_b)] = Dump(
-                args.dump_path, 'b', 'tcp', port_b)
+                args.dump_path, args.max_dump_batch_size, 'b', 'tcp', port_b)
 
     # Define middleman functions for UDP and TCP relays if either substitution
     # or dump path has been defined
